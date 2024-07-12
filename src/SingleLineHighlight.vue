@@ -8,6 +8,7 @@ import {
   toRefs,
   watch,
 } from "vue";
+import { debounce } from './utils.js'
 defineOptions({
   name: "hightlight",
 });
@@ -20,16 +21,41 @@ const props = defineProps({
     type: Array,
     default: () => [],
   },
+  debug: {
+    type: Boolean,
+    default: false,
+  },
 });
 
-const { text, highlights } = toRefs(props);
+const { text, highlights, debug } = toRefs(props);
 // 开始的单词索引
 const startWordIndex = ref(0);
+const regexParts = [
+  "\\p{Script=Han}", // 汉字
+  "\\p{Script=Thai}", // 泰文
+  "\\p{Script=Cyrillic}", // 西里尔字母
+  "\\s", // 空格字符
+  "\\u0028", // 半角左括号 (
+  "\\u0029", // 半角右括号 )
+  "\\uFF08", // 全角左括号 （
+  "\\uFF09", // 全角右括号 ）
+  "\\u002C", // 英文逗号 ,
+  "\\u3001", // 中文顿号 、
+  "\\u002E", // 英文句号 .
+  "\\u3002", // 中文句号 。
+  "\\u003B", // 英文分号 ;
+  "\\uFF1B", // 中文分号 ；
+  "\\u002D", // 半角连字符 -
+  "\\u2013", // En dash –
+  "\\u2014", // Em dash —
+  "\\uFF0D", // 全角连字符 －
+];
 const words = computed(() => {
-  // return text.value.split(/(?=\p{Script=Han}|\p{Script=Thai}|\p{Script=Cyrillic})|(?<=\p{Script=Han}|\p{Script=Thai}|\p{Script=Cyrillic})|\s+/u)
-  return text.value.split(
-    /(?=\p{Script=Han}|\p{Script=Thai}|\p{Script=Cyrillic}|\s|[\u0028\u0029\uFF08\uFF09])|(?<=\p{Script=Han}|\p{Script=Thai}|\p{Script=Cyrillic}|\s|[\u0028\u0029\uFF08\uFF09])/u
-  );
+  const regexString = `(?=${regexParts.join("|")})|(?<=${regexParts.join(
+    "|"
+  )})`;
+  const regex = new RegExp(regexString, "gu");
+  return text.value.split(regex);
 });
 // 结束的单词索引
 const endWordIndex = ref(words.value.length);
@@ -41,11 +67,17 @@ const renderText = computed(() => {
   ].filter((item) => item !== undefined);
   return result.join("");
 });
-watch(renderText, (value, oldValue) => {
-  if (value !== oldValue) {
-    console.log(value);
-  }
-});
+if (debug.value) {
+  watch(renderText, (value, oldValue) => {
+    if (value !== oldValue) {
+      // console.table({
+      //   text: text.value,
+      //   renderText: value
+      // })
+      console.log(value);
+    }
+  });
+}
 const hasHighlightText = () => {
   // 构建正则表达式，使用|分隔
   const regexPattern = highlights.value
@@ -104,36 +136,77 @@ const initRenderText = () => {
   });
 };
 
+const reRenderText = () => {
+  return new Promise((resolve) => {
+    nextTick(async () => {
+      if (isOverflowing(innerRef.value)) {
+        startWordIndex.value += 1;
+        const promise = await reRenderText();
+        resolve(promise);
+      } else {
+        resolve();
+      }
+    });
+  });
+};
 const execWindowFunction = async () => {
   while (startWordIndex.value < words.value.length) {
-    startWordIndex.value += 1;
-    if (endWordIndex.value < words.value.length) {
-      if (endWordIndex.value < words.value.length - 5) {
-        endWordIndex.value += 5;
-      } else if (endWordIndex.value < words.value.length - 4) {
-        endWordIndex.value += 4;
-      } else if (endWordIndex.value < words.value.length - 3) {
-        endWordIndex.value += 3;
-      } else if (endWordIndex.value < words.value.length - 2) {
-        endWordIndex.value += 2;
-      } else if (endWordIndex.value < words.value.length - 1) {
-        endWordIndex.value += 1;
-      }
-    }
-    await initRenderText();
-    execWindowFunction();
     if (hasHighlightText()) {
-      break
+      break;
+    }
+    if (isOverflowing(innerRef.value)) {
+      startWordIndex.value += 1;
+    }
+    if (endWordIndex.value < words.value.length - 6) {
+      endWordIndex.value += 5;
+    } else if (endWordIndex.value < words.value.length - 5) {
+      endWordIndex.value += 4;
+    } else if (endWordIndex.value < words.value.length - 4) {
+      endWordIndex.value += 3;
+    } else if (endWordIndex.value < words.value.length - 3) {
+      endWordIndex.value += 2;
+    } else if (endWordIndex.value < words.value.length - 2) {
+      endWordIndex.value += 1;
     }
   }
 };
-onMounted(async () => {
+const endRenderText = () => {
+  return new Promise((resolve) => {
+    nextTick(async () => {
+      if (
+        !isOverflowing(innerRef.value) &&
+        endWordIndex.value < words.value.length - 1
+      ) {
+        endWordIndex.value += 1;
+        const promise = await endRenderText();
+        if (isOverflowing(innerRef.value)) {
+          endWordIndex.value -= 1;
+          resolve(promise);
+        }
+      } else {
+        // endWordIndex.value -= 1
+        resolve();
+      }
+    });
+  });
+};
+const isDone = ref(false)
+const init = debounce(async () => {
   try {
     await initRenderText();
     execWindowFunction();
+    /** 再次渲染处理头部省略号 */
+    await reRenderText();
+    /** 最后在处理尾部不足部分 */
+    endRenderText();
   } catch (error) {
     console.error(error);
+  } finally {
+    isDone.value = true
   }
+}, 500)
+onMounted(() => {
+  init();
 });
 </script>
 
@@ -144,13 +217,12 @@ onMounted(async () => {
         {{ renderText }}
       </div>
     </div>
-    <slot name="default" :renderText="renderText" />
+    <slot v-if="isDone" name="default" :renderText="renderText" />
   </div>
 </template>
 
 <style scoped>
 .single-line-highlight {
-  /* width: 375px; */
   width: 100%;
   position: relative;
   .mock {
