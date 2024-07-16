@@ -8,7 +8,7 @@ import {
   toRefs,
   watch,
 } from "vue";
-import { debounce } from './utils.js'
+import { debounce } from "./utils.js";
 defineOptions({
   name: "hightlight",
 });
@@ -50,12 +50,59 @@ const regexParts = [
   "\\u2014", // Em dash —
   "\\uFF0D", // 全角连字符 －
 ];
+
+const splitString = (str) => {
+  const result = [];
+  let buffer = "";
+
+  const splitCharacters = [
+    "(",
+    ")",
+    "（",
+    "）",
+    ",",
+    "、",
+    ".",
+    "。",
+    ";",
+    "；",
+    "-",
+    "–",
+    "—",
+    "－",
+  ];
+
+  /** 解决ios低版本不支持零宽断言的问题 */
+  const isSplitCharacter = (char) => {
+    return (
+      splitCharacters.includes(char) ||
+      /[\p{Script=Han}\p{Script=Thai}\p{Script=Cyrillic}\s]/u.test(char)
+    );
+  };
+
+  for (const char of str) {
+    if (isSplitCharacter(char)) {
+      if (buffer) {
+        result.push(buffer);
+        buffer = "";
+      }
+      result.push(char);
+    } else {
+      buffer += char;
+    }
+  }
+
+  if (buffer) {
+    result.push(buffer);
+  }
+
+  return result;
+};
 const words = computed(() => {
-  const regexString = `(?=${regexParts.join("|")})|(?<=${regexParts.join(
-    "|"
-  )})`;
-  const regex = new RegExp(regexString, "gu");
-  return text.value.split(regex);
+  // const regexString = `(?=${regexParts.join('|')})|(?<=${regexParts.join('|')})`
+  // const regex = new RegExp(regexString, 'gu')
+  // return text.value.split(regex)
+  return splitString(text.value);
 });
 // 结束的单词索引
 const endWordIndex = ref(words.value.length);
@@ -190,7 +237,7 @@ const endRenderText = () => {
     });
   });
 };
-const isDone = ref(false)
+const isDone = ref(false);
 const init = debounce(async () => {
   try {
     await initRenderText();
@@ -202,9 +249,9 @@ const init = debounce(async () => {
   } catch (error) {
     console.error(error);
   } finally {
-    isDone.value = true
+    isDone.value = true;
   }
-}, 500)
+}, 500);
 onMounted(() => {
   init();
 });
@@ -213,7 +260,7 @@ onMounted(() => {
 <template>
   <div ref="" class="single-line-highlight">
     <div class="mock">
-      <div ref="innerRef" class="inner single-line-ellipsis">
+      <div ref="innerRef" class="inner">
         {{ renderText }}
       </div>
     </div>
